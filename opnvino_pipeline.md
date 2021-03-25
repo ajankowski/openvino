@@ -6,10 +6,9 @@ OpenVino is targeted at ML engineers fluent in model deployments in production, 
 
 I'm using the simplest workflow I could come up with (you will definitely notice MNIST dataset and extremely simplistic model architecture).
 Step number one - Virtual Machine - you really want it to play with OpenVino initially. I had to install OpenVino a few times to get everything right, not because it is so hard, just involved and looks like I cannot follow instructions without trying to be smarter (:-)).
-Next - we need our model. A word of caution here - there is a long list of OpenVino versions and only the recent one (2020.4) supports TensorFlow 2.2, previous ones work only with TF up to 1.15 (for the sake of greater compatibility I will focus on TF 1.15)
+Next - we need our model. 
 Lets build the simplest model using tf.keras API.
 ``` python
-%%tensorflow_version 1.x # let's make sure we use supported tensorflow version, as default in tensorflow 2.x is now default in colab
 import tensorflow as tf
 from tensorflow.keras import layers
 from tensorflow.keras import datasets
@@ -31,33 +30,19 @@ model.add(layers.Dense(10, activation='softmax))
 model.compile(loss='categorical_crossentropy, optimizer='adam', metrics=['accuracy'])
 model.fit(train_data, labels, epochs=10, batch_size = 32, validation_split=0.2)
 ```
-Now as we have our model trained we have to save it. Using keras.save() doesn't work in OpenVino 2020.3 and earlier so we need to use some custom code to have our model in a format that is supported.
-Below is the only way I managed to make my saved model work with OpenVino.
+Now as we have our model trained we have to save it.   
+I will save it using `tf.keras.save()` and than load and save using `tf.saved_model` just to show how you can take your `.h5` models and saved it in a form appropriate for OpenVino.
 ```python
-from tensorflow.keras import backend as K
-sess = K.get_session()
-def freeze_session(session, keep_var_names=None, output_names=None, clear_devices=True): 
- from tensorflow.python.framework.graph_util import convert_variables_to_constants
- graph = sess.graph
- with graph.as_default():
- freeze_var_names = list(set(v.op.name for v in tf.global_variables()).difference(keep_var_names or []))
- output_names = output_names or []
- output_names += [v.op.name for v in tf.global_variables()]
- 
- input_graph_def = graph.as_graph_def()
- if clear_devices:
- for node in input_graph_def.node:
- node.device = ""
- frozen_graph = convert_variables_to_constants(session, input_graph_def, output_names, freeze_var_names)
- return frozen_graph
-frozen_graph = freeze_session(K.get_session(), output_names=[out.op.name for out in model.outputs])
-tf.train.write_graph(frozen_graph, "model", "tf_model_2.pb", as_text=False)
+model.save('simple_model.h5') # keras API for saving model
+
+model_ov = tf.keras.models.load_model('simple_model.h5')
+tf.saved_model.save(model_ov,'saved_model')
 ```
 Copy the model to your local machine, all next steps assume both the trained model and OpenVino are in VM on your local computer.
 Now when we have a model saved in appropriate format, we can use OpenVino model optimizer (mo_tf.py script) to optimize it and also to convert it into intermediate representation(IR (xml and bin)) to be used be inference engine.
 Run model optimizer in shell.
 ```shell
-python3 mo_tf.py - input_model 'link_to_model.pb' - input_shape=[1,784]
+!python {mo_tf_path} --saved_model_dir {model_dir} --output_dir {output_dir} --input_shape {input_shape_str}
 ```
 Done - quite unexpectedly your optimized model is saved in
 ```
@@ -81,9 +66,9 @@ import cv2
 from openvino.inference_engine import IECore
 ```
 ```python
-# path to optimized model files 
-model_xml = '/opt/intel/openvino/deployment_tools/model_optimizer/tf_model_2.xml'
-model_bin = '/opt/intel/openvino/deployment_tools/model_optimizer/tf_model_2.bin'
+# path to optimized model files (i assume you model files are tf_model.xml, tf_model.bin 
+model_xml = '/opt/intel/openvino/deployment_tools/model_optimizer/tf_model.xml'
+model_bin = '/opt/intel/openvino/deployment_tools/model_optimizer/tf_model.bin'
 # initialize inference engine
 device = 'CPU'
 ie = IECore()
